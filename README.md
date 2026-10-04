@@ -8,6 +8,8 @@ Requisiti
 
 Installazione
 
+Installazione FFmpeg e creavideo.js
+
 Configurazione
 
 Variabili d'ambiente
@@ -141,12 +143,275 @@ json
     "sharp": "^0.33.x"
   }
 }
-Il file ./commands/creavideo.js deve esportare un oggetto con:
+🎥 Installazione FFmpeg e creavideo.js
+Questa sezione spiega esattamente dove mettere i file per far funzionare /creavideo.
 
-data — SlashCommandBuilder con opzioni
+📁 Struttura finale delle cartelle
+text
+discord-guardian-bot/
+├── index.js                    ← entry point
+├── package.json
+├── .env                        ← variabili d'ambiente
+├── config.settings.json        ← auto-generato
+├── commands/                   ← cartella comandi
+│   └── creavideo.js            ← QUI va creavideo.js
+├── video_output/               ← auto-creata (video temporanei)
+├── backups/
+│   ├── backup_<guildId>.json
+│   └── history/
+├── ffmpeg/                     ← (opzionale, solo Windows portable)
+│   ├── ffmpeg.exe
+│   ├── ffprobe.exe
+│   └── ffplay.exe
+└── node_modules/
+🎬 creavideo.js — dove metterlo
+Posizione obbligatoria
+text
+discord-guardian-bot/commands/creavideo.js
+Perché
+In index.js c'è questa riga:
 
-execute(interaction) — funzione che gestisce l'interazione
+javascript
+const creavideoCommand = require('./commands/creavideo.js');
+Il path è relativo alla root del progetto. Se il file è altrove, il bot crasha all'avvio con:
 
+text
+Error: Cannot find module './commands/creavideo.js'
+Come crearlo
+Metodo 1 — Manuale
+
+bash
+mkdir commands
+nano commands/creavideo.js
+Metodo 2 — Copia da template
+
+Se hai già un creavideo.js altrove, copialo:
+
+bash
+cp /percorso/vecchio/creavideo.js ./commands/
+Deve esportare data e execute
+javascript
+// commands/creavideo.js
+const { SlashCommandBuilder } = require('discord.js');
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName('creavideo')
+    .setDescription('Crea un video'),
+  async execute(interaction) {
+    // logica
+  }
+};
+Senza data → errore creavideoCommand.data is not a function
+Senza execute → errore quando l'utente usa /creavideo
+
+🎥 FFmpeg — dove metterlo
+Hai tre strade. Scegli in base al sistema operativo.
+
+🐧 Linux (VPS, Debian/Ubuntu)
+Strada consigliata: installazione di sistema
+
+bash
+sudo apt update
+sudo apt install -y ffmpeg
+Verifica:
+
+bash
+which ffmpeg
+# → /usr/bin/ffmpeg
+ffmpeg -version
+Nessuna cartella da creare. fluent-ffmpeg trova ffmpeg automaticamente nel PATH.
+
+Se usi Fedora/RHEL:
+
+bash
+sudo dnf install -y ffmpeg
+Se usi Alpine (Docker):
+
+bash
+apk add --no-cache ffmpeg
+🪟 Windows
+Hai due opzioni.
+
+Opzione A — Installazione di sistema (più semplice)
+
+Scarica da gyan.dev/ffmpeg/builds → release-essentials.zip
+
+Estrai in C:\ffmpeg\
+
+Aggiungi C:\ffmpeg\bin al PATH:
+
+Tasto Windows → "Variabili d'ambiente" → Variabili di sistema → Path → Modifica → Nuovo → C:\ffmpeg\bin
+
+Riapri il terminale
+
+Verifica:
+
+cmd
+ffmpeg -version
+Opzione B — Portable nella cartella del bot
+
+Scarica ed estrai ffmpeg.exe, ffprobe.exe, ffplay.exe
+
+Mettili in:
+
+text
+discord-guardian-bot/ffmpeg/
+Nel tuo creavideo.js, imposta il path esplicito:
+
+javascript
+const ffmpeg = require('fluent-ffmpeg');
+const path = require('path');
+
+// Windows
+ffmpeg.setFfmpegPath(path.join(__dirname, '..', 'ffmpeg', 'ffmpeg.exe'));
+ffmpeg.setFfprobePath(path.join(__dirname, '..', 'ffmpeg', 'ffprobe.exe'));
+Attenzione: __dirname è commands/, quindi .. sale alla root. Da lì ffmpeg/ffmpeg.exe.
+
+🐳 Docker
+Nel Dockerfile:
+
+dockerfile
+FROM node:20-alpine
+
+# Installa FFmpeg
+RUN apk add --no-cache ffmpeg
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+
+# Crea cartelle runtime
+RUN mkdir -p video_output backups/history
+
+CMD ["node", "index.js"]
+Verifica dentro il container:
+
+bash
+docker exec -it guardian-bot which ffmpeg
+# → /usr/bin/ffmpeg
+🔧 Configurazione in creavideo.js
+Template completo che gestisce sia il PATH di sistema che la modalità portable:
+
+javascript
+// commands/creavideo.js
+const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+const ffmpeg = require('fluent-ffmpeg');
+const path = require('path');
+const fs = require('fs');
+
+// === CONFIGURAZIONE FFMPEG ===
+// Prova prima il binario portable, poi il PATH di sistema
+const localFfmpeg = path.join(__dirname, '..', 'ffmpeg', 'ffmpeg.exe');
+const localFfprobe = path.join(__dirname, '..', 'ffmpeg', 'ffprobe.exe');
+
+if (fs.existsSync(localFfmpeg)) {
+  ffmpeg.setFfmpegPath(localFfmpeg);
+  console.log('[creavideo] FFmpeg portable trovato');
+}
+if (fs.existsSync(localFfprobe)) {
+  ffmpeg.setFfprobePath(localFfprobe);
+}
+// Altrimenti usa il PATH di sistema automaticamente
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName('creavideo')
+    .setDescription('Crea un video personalizzato')
+    .addStringOption(o =>
+      o.setName('testo').setDescription('Testo da mostrare').setRequired(true))
+    .addIntegerOption(o =>
+      o.setName('durata').setDescription('Durata in secondi').setMinValue(3).setMaxValue(60)),
+
+  async execute(interaction) {
+    await interaction.deferReply();
+
+    const testo = interaction.options.getString('testo');
+    const durata = interaction.options.getInteger('durata') ?? 10;
+
+    const outputDir = process.env.VIDEO_OUTPUT_DIR || './video_output';
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    const out = path.join(outputDir, `${interaction.id}.mp4`);
+
+    try {
+      await new Promise((resolve, reject) => {
+        ffmpeg()
+          .input(`color=c=black:s=1280x720:d=${durata}`)
+          .inputFormat('lavfi')
+          .videoFilters(
+            `drawtext=text='${testo.replace(/'/g, "\\'")}':` +
+            `fontcolor=white:fontsize=48:` +
+            `x=(w-text_w)/2:y=(h-text_h)/2`
+          )
+          .outputOptions([
+            '-c:v libx264',
+            '-pix_fmt yuv420p',
+            '-preset fast',
+            '-movflags +faststart'
+          ])
+          .save(out)
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      const attachment = new AttachmentBuilder(out);
+      await interaction.editReply({ files: [attachment] });
+
+    } catch (err) {
+      console.error('[creavideo]', err);
+      await interaction.editReply(`❌ Errore rendering: ${err.message}`);
+    } finally {
+      fs.unlink(out, () => {});
+    }
+  }
+};
+📋 Checklist finale
+Linux
+
+□ sudo apt install ffmpeg (o equivalente)
+□ commands/creavideo.js presente
+□ node index.js parte senza errori
+□ /creavideo testo:Ciao funziona
+Windows — PATH di sistema
+
+□ FFmpeg in C:\ffmpeg\bin
+□ PATH aggiornato
+□ ffmpeg -version funziona in cmd
+□ commands/creavideo.js presente
+□ /creavideo testo:Ciao funziona
+Windows — Portable
+
+□ ffmpeg/ffmpeg.exe + ffprobe.exe nella root del bot
+□ creavideo.js con ffmpeg.setFfmpegPath(...)
+□ /creavideo testo:Ciao funziona
+Docker
+
+□ RUN apk add --no-cache ffmpeg nel Dockerfile
+□ Volume montato: -v $(pwd)/video_output:/app/video_output
+□ /creavideo testo:Ciao funziona
+🧪 Test rapido
+Dopo aver messo tutto a posto, testa da terminale:
+
+Linux / macOS:
+
+bash
+node -e "const ff=require('fluent-ffmpeg'); ff.getAvailableFormats((e,f)=>{if(e)console.error(e);else console.log('OK, formati:',Object.keys(f).length)})"
+Windows:
+
+cmd
+node -e "const ff=require('fluent-ffmpeg'); ff.getAvailableFormats((e,f)=>{if(e)console.error(e);else console.log('OK, formati:',Object.keys(f).length)})"
+Se stampa OK, formati: N → FFmpeg è correttamente rilevato.
+
+⚠️ Errori comuni
+Errore	Causa	Fix
+Cannot find module './commands/creavideo.js'	File mancante o path sbagliato	Metti creavideo.js in commands/
+creavideoCommand.data is not a function	Manca data nell'export	Aggiungi data: new SlashCommandBuilder()...
+ffmpeg: command not found	FFmpeg non installato o fuori PATH	Installa o usa modalità portable
+drawtext: No such filter	FFmpeg compilato senza --enable-libfreetype	Usa build completa (gyan.dev)
+EACCES: permission denied, mkdir video_output	Permessi cartella	chmod 755 video_output
+ENOENT: no such file or directory, open ...mp4	video_output/ non esiste	Il bot la crea con fs.mkdirSync
 ⚙️ Configurazione
 La configurazione avviene in due modi:
 
@@ -158,58 +423,58 @@ Ordine di priorità
 /config > .env > default hardcoded
 
 🌍 Variabili d'ambiente
-Crea un file .env nella root:
+Crea un file .env nella root. Solo le variabili che non possono essere gestite da /config vanno qui.
 
 env
+# ============================================================
+#  DISCORD GUARDIAN BOT — .env.example
+#  Copia questo file in `.env` e compila i valori.
+#
+#  NOTA: tutto ciò che riguarda canali, ruoli, whitelist e
+#  log è gestito via `/config` e salvato in config.settings.json.
+#  NON aggiungerli qui.
+# ============================================================
+
 # === OBBLIGATORIE ===
-TOKEN=il_tuo_bot_token
-CLIENT_ID=id_applicazione
-GUILD_ID=id_server_principale
-OWNER_ID=tuo_id_discord
+TOKEN=il_tuo_bot_token_qui
+CLIENT_ID=123456789012345678
+GUILD_ID=123456789012345678
+OWNER_ID=123456789012345678
 
-# === LOGGING ===
-LOG_CHANNEL_IDS=id1,id2,id3
-ALERT_CHANNEL_ID=id_canale_alert
-SUSPICIOUS_BOT_LOG_CHANNEL_ID=id_canale_bot_sospetti
-MESSAGE_LOG_CHANNEL_ID=id
-VOICE_LOG_CHANNEL_ID=id
-MEMBER_LOG_CHANNEL_ID=id
-MOD_LOG_CHANNEL_ID=id
-
-# === RUOLI ===
-IMMUNE_ROLE_ID=id_ruolo_immune
-MEMBER_ROLE_ID=id_ruolo_membro
-OG_ROLE_ID=id_ruolo_og
-
-# === STAFF ROLES ===
-STAFF_ROLE_HELPER=id
-STAFF_ROLE_MODERATOR=id
-STAFF_ROLE_FOUNDER=id
-STAFF_ROLE_HEAD_MEDIA=id
-STAFF_ROLE_ADMIN=id
-STAFF_ROLE_SENIOR=id
-
-# === TICKET ROLES ===
-TICKET_ROLE_MEMBRI=id
-TICKET_ROLE_BOT=id
-
-# === CANALI SPECIALI ===
-VERIFY_CHANNEL_ID=id_canale_verifica
-WELCOME_CHANNEL_ID=id_canale_benvenuto
-AI_FREE_CHANNEL_IDS=id1,id2
-AUTO_PUBLISH_CHANNELS=id1,id2
-AUTO_THREAD_CHANNELS=id1,id2
-
-# === WHITELIST ===
-WHITELISTED_IDS=id1,id2,id3
-
-# === VIDEO ===
+# === VIDEO (/creavideo) ===
 VIDEO_OUTPUT_DIR=./video_output
 VIDEO_MAX_DURATION=60
 VIDEO_MAX_SIZE_MB=8
 
+# === BACKUP ===
+BACKUP_INTERVAL_HOURS=24
+BACKUP_HISTORY_KEEP=10
+
 # === LOGGING INTERNO ===
-LOG_LEVEL=info   # debug | info | warn | error
+LOG_LEVEL=info
+
+# === TIMEOUT / ESCALATION ===
+ESCALATION_WINDOW_HOURS=48
+MAX_TIMEOUT_MINUTES=40320
+Cosa è gestito da /config (NON nel .env)
+Variabile	Comando /config equivalente
+LOG_CHANNEL_IDS	/config logchannel add|remove|list
+ALERT_CHANNEL_ID	/config channel set alert #canale
+SUSPICIOUS_BOT_LOG_CHANNEL_ID	/config channel set bot_sospetti #canale
+MESSAGE_LOG_CHANNEL_ID	/config channel set log_messaggi #canale
+VOICE_LOG_CHANNEL_ID	/config channel set log_vocale #canale
+MEMBER_LOG_CHANNEL_ID	/config channel set log_membri #canale
+MOD_LOG_CHANNEL_ID	/config channel set log_moderazione #canale
+IMMUNE_ROLE_ID	/config role set immune @ruolo
+MEMBER_ROLE_ID	/config role set membro @ruolo
+OG_ROLE_ID	/config role set og @ruolo
+STAFF_ROLE_*	/config staffrole set <chiave> @ruolo
+TICKET_ROLE_*	/config ticketrole set <motivo> @ruolo
+VERIFY_CHANNEL_ID	/config channel set verify #canale
+WELCOME_CHANNEL_ID	/config channel set welcome #canale
+AI_FREE_CHANNEL_IDS	/config freechannel add|remove|list
+AUTO_PUBLISH_CHANNELS	/config publishchannel add|remove|list
+WHITELISTED_IDS	/config whitelist add|remove|list
 📁 Struttura del progetto
 text
 .
@@ -222,6 +487,7 @@ text
 ├── stats_channels.json         # ID canali stats (auto-generato)
 ├── ticket_data.json            # Dati ticket (auto-generato)
 ├── video_output/               # Video generati (auto-creata)
+├── ffmpeg/                     # (opzionale) FFmpeg portable
 └── backups/
     ├── backup_<guildId>.json   # Ultimo backup
     └── history/
@@ -293,7 +559,7 @@ VIDEO_OUTPUT_DIR	./video_output	Cartella output temporaneo
 VIDEO_MAX_DURATION	60	Durata massima in secondi
 VIDEO_MAX_SIZE_MB	8	Dimensione massima allegato (limite Discord free)
 Requisiti runtime
-FFmpeg nel PATH di sistema
+FFmpeg nel PATH di sistema (o portable in ffmpeg/)
 
 Spazio disco almeno 500 MB per video temporanei
 
@@ -310,47 +576,6 @@ Se il video supera VIDEO_MAX_SIZE_MB, il bot risponde con errore
 
 Concurrency: se più utenti invocano /creavideo insieme, il bot mette in coda (limite consigliato: 2 simultanei)
 
-Esempio di implementazione creavideo.js
-javascript
-const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
-const ffmpeg = require('fluent-ffmpeg');
-const path = require('path');
-const fs = require('fs');
-
-module.exports = {
-  data: new SlashCommandBuilder()
-    .setName('creavideo')
-    .setDescription('Crea un video personalizzato')
-    .addStringOption(o =>
-      o.setName('testo').setDescription('Testo da mostrare').setRequired(true))
-    .addIntegerOption(o =>
-      o.setName('durata').setDescription('Durata in secondi').setMinValue(3).setMaxValue(60)),
-
-  async execute(interaction) {
-    await interaction.deferReply();
-    const testo = interaction.options.getString('testo');
-    const durata = interaction.options.getInteger('durata') ?? 10;
-    const out = path.join('./video_output', `${interaction.id}.mp4`);
-
-    fs.mkdirSync('./video_output', { recursive: true });
-
-    await new Promise((resolve, reject) => {
-      ffmpeg()
-        .input('color=c=black:s=1280x720:d=' + durata)
-        .inputFormat('lavfi')
-        .videoFilters(`drawtext=text='${testo}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2`)
-        .outputOptions(['-c:v libx264', '-pix_fmt yuv420p'])
-        .save(out)
-        .on('end', resolve)
-        .on('error', reject);
-    });
-
-    const attachment = new AttachmentBuilder(out);
-    await interaction.editReply({ files: [attachment] });
-
-    fs.unlink(out, () => {});
-  }
-};
 🧠 Sistemi interni
 ViolationTracker
 Traccia violazioni in una finestra di 15s. Soglia: 3 violazioni = azione.
@@ -491,14 +716,16 @@ Verifica che il canale pannello abbia i permessi corretti
 Controlla TICKET_ROLE_MEMBRI e TICKET_ROLE_BOT
 
 Log non arrivano
-Verifica che i canali in LOG_CHANNEL_IDS esistano
+Verifica che i canali configurati esistano
 
 Controlla che il bot abbia Send Messages + Embed Links
 
 Se fallisce tutto, il bot DMa l'owner come fallback
 
 /creavideo non funziona
-ffmpeg: command not found → installa FFmpeg nel sistema
+ffmpeg: command not found → installa FFmpeg nel sistema (vedi Installazione FFmpeg e creavideo.js)
+
+Cannot find module './commands/creavideo.js' → il file non è in commands/
 
 "File troppo grande" → riduci durata o risoluzione (max 8 MB free)
 
@@ -512,15 +739,6 @@ Timeout Discord (15 min) → il rendering deve finire in 15 min; se più lungo, 
 
 Permessi cartella → chmod 755 video_output
 
-FFmpeg non installato ma /creavideo in uso
-Linux: sudo apt install ffmpeg (Debian/Ubuntu) o sudo dnf install ffmpeg (Fedora)
-
-macOS: brew install ffmpeg
-
-Windows: scarica da ffmpeg.org, estrai, aggiungi bin/ al PATH
-
-Alternativa: usa @ffmpeg-installer/ffmpeg in Node che scarica il binario automaticamente
-
 📝 Note
 Config persistente: tutte le modifiche via /config sopravvivono al riavvio
 
@@ -530,7 +748,7 @@ Backup automatico: ogni 24h per ogni guild (cronologia ultimi 10)
 
 Fallback DM: se nessun canale log è disponibile, il bot DMa l'owner
 
-Whitelist: utenti in WHITELISTED_IDS sono immuni a tutte le azioni automatiche
+Whitelist: utenti in whitelist sono immuni a tutte le azioni automatiche
 
 Video: i file temporanei in video_output/ vanno puliti periodicamente; aggiungi un cron job o uno script di cleanup
 
