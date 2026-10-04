@@ -1,0 +1,42 @@
+# ============================================================
+#  DISCORD GUARDIAN BOT — .env.example
+#  Copia questo file in `.env` e compila i valori.
+#
+#  NOTA: tutto ciò che riguarda canali, ruoli, whitelist e
+#  log è gestito via `/config` e salvato in config.settings.json.
+#  NON aggiungerli qui.
+# ============================================================
+
+# === OBBLIGATORIE ===
+# Token del bot (Discord Developer Portal → Bot → Reset Token)
+TOKEN=il_tuo_bot_token_qui
+# ID applicazione (Developer Portal → General Information → Application ID)
+CLIENT_ID=123456789012345678
+# ID del server principale (serve per registrare i comandi guild al primo avvio)
+GUILD_ID=123456789012345678
+# Il TUO ID Discord — necessario per il primo avvio, poi modificabile via /config
+OWNER_ID=123456789012345678
+
+# === VIDEO (/creavideo) ===
+# Cartella dove vengono salvati i video temporanei
+VIDEO_OUTPUT_DIR=./video_output
+# Durata massima video in secondi
+VIDEO_MAX_DURATION=60
+# Dimensione massima allegato in MB (8 = limite Discord free)
+VIDEO_MAX_SIZE_MB=8
+
+# === BACKUP ===
+# Intervallo backup automatico in ore
+BACKUP_INTERVAL_HOURS=24
+# Quanti backup storici mantenere per guild
+BACKUP_HISTORY_KEEP=10
+
+# === LOGGING INTERNO ===
+# Livello di log: debug | info | warn | error
+LOG_LEVEL=info
+
+# === TIMEOUT / ESCALATION ===
+# Finestra escalation in ore (default: 48)
+ESCALATION_WINDOW_HOURS=48
+# Timeout massimo consentito via /timeout in minuti (default: 40320 = 28 giorni)
+MAX_TIMEOUT_MINUTES=40320
